@@ -1,0 +1,971 @@
+// DreamGirl Family Salon — Prisma Schema
+// Version: 1.0 | All core data models per PRD v1.0
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum Role {
+  OWNER
+  MANAGER
+  RECEPTIONIST
+  STYLIST
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum BillType {
+  SERVICE
+  PRODUCT
+  COMBO_PACK
+  SPA_PACK
+  PREPAID_PACK
+  MEMBERSHIP
+}
+
+enum PaymentStatus {
+  PAID
+  PARTIAL
+  DUE
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  WALLET
+  MEMBERSHIP_CREDITS
+  ADVANCE
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum AppointmentSource {
+  WALK_IN
+  ONLINE
+  PHONE
+  WHATSAPP
+}
+
+enum PackStatus {
+  ACTIVE
+  EXPIRED
+  EXHAUSTED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum StockMovementType {
+  PURCHASE
+  SALE
+  ADJUSTMENT
+  POOL_TO_STATION
+  TRANSFER
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENT
+  FAILED
+}
+
+// ─────────────────────────────────────────────
+// BRANCH & USERS
+// ─────────────────────────────────────────────
+
+model Branch {
+  id               String   @id @default(uuid())
+  name             String
+  slug             String   @unique
+  phone            String?
+  email            String?
+  address          String?
+  city             String?
+  state            String?
+  pincode          String?
+  googleMapLink    String?
+  logoUrl          String?
+  businessHours    Json?    // { mon: { open: "09:00", close: "20:00", closed: false }, ... }
+  appointmentHours Json?
+  holidays         DateTime[]
+  bookingEnabled   Boolean  @default(false)
+  bookingUrl       String?
+  slotDuration     Int      @default(30) // minutes
+
+  // Social
+  twitter    String?
+  facebook   String?
+  instagram  String?
+  youtube    String?
+  linkedin   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users        User[]
+  employees    Employee[]
+  customers    Customer[]
+  bills        Bill[]
+  appointments Appointment[]
+  chairs       Chair[]
+  settings     Setting[]
+  expenses     Expense[]
+  campaigns    WhatsAppCampaign[]
+  inhouseItems InhouseItem[]
+  suppliers    Supplier[]
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  phone        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(RECEPTIONIST)
+  isActive     Boolean  @default(true)
+  lastLoginAt  DateTime?
+
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  employeeId String?   @unique
+  employee   Employee? @relation(fields: [employeeId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdBills       Bill[]        @relation("BillCreatedBy")
+  auditLogs          AuditLog[]
+  refreshTokens      RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// EMPLOYEES
+// ─────────────────────────────────────────────
+
+model Employee {
+  id             String   @id @default(uuid())
+  name           String
+  phone          String
+  email          String?
+  role           Role     @default(STYLIST)
+  isActive       Boolean  @default(true)
+  commissionType String   @default("PERCENT") // PERCENT | FLAT
+  commissionRate Decimal  @default(0) @db.Decimal(5, 2)
+  monthlyTarget  Decimal  @default(0) @db.Decimal(10, 2)
+  joinDate       DateTime?
+  photoUrl       String?
+
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user             User?
+  appointments     Appointment[]
+  billItems        BillItem[]
+  attendanceLogs   AttendanceLog[]
+  tips             Tip[]
+  stationStocks    StationStock[]
+}
+
+model AttendanceLog {
+  id         String    @id @default(uuid())
+  employeeId String
+  employee   Employee  @relation(fields: [employeeId], references: [id])
+  clockIn    DateTime
+  clockOut   DateTime?
+  hoursWorked Decimal? @db.Decimal(4, 2)
+  date       DateTime  @db.Date
+  createdAt  DateTime  @default(now())
+}
+
+// ─────────────────────────────────────────────
+// CUSTOMERS
+// ─────────────────────────────────────────────
+
+model Customer {
+  id            String   @id @default(uuid())
+  customerId    String?  @unique // e.g., DG-CUST-001
+  name          String
+  phone         String
+  email         String?
+  gender        Gender?
+  dob           DateTime? @db.Date
+  anniversary   DateTime? @db.Date
+  photoUrl      String?
+  address       String?
+  city          String?
+  notes         String?  // internal notes (allergies, preferences)
+  walletBalance Decimal  @default(0) @db.Decimal(10, 2)
+  loyaltyPoints Int      @default(0)
+  isActive      Boolean  @default(true)
+
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  groupId String?
+  group   CustomerGroup? @relation(fields: [groupId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([phone, branchId])
+
+  bills              Bill[]
+  appointments       Appointment[]
+  walletTransactions WalletTransaction[]
+  activeSpaPacks     CustomerSpaPack[]
+  activeComboPacks   CustomerComboPack[]
+  activePrepaidPacks CustomerPrepaidPack[]
+  memberships        CustomerMembership[]
+}
+
+model CustomerGroup {
+  id          String   @id @default(uuid())
+  name        String   // VIP, Regular, Staff, Corporate, etc.
+  description String?
+  color       String?  // hex color for UI
+  rules       Json?    // { minSpend: 5000, minVisits: 10 }
+  isActive    Boolean  @default(true)
+
+  branchId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customers Customer[]
+  campaigns WhatsAppCampaign[]
+}
+
+// ─────────────────────────────────────────────
+// SERVICES & PRODUCTS
+// ─────────────────────────────────────────────
+
+model ServiceCategory {
+  id              String   @id @default(uuid())
+  name            String
+  genderApplicable Gender? // null = both
+  sortOrder       Int      @default(0)
+  isActive        Boolean  @default(true)
+  branchId        String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  services Service[]
+}
+
+model Service {
+  id           String   @id @default(uuid())
+  name         String
+  description  String?
+  price        Decimal  @db.Decimal(10, 2)
+  duration     Int      @default(30) // minutes
+  commissionRate Decimal @default(0) @db.Decimal(5, 2)
+  taxRate      Decimal  @default(0)  @db.Decimal(5, 2)
+  isActive     Boolean  @default(true)
+
+  categoryId String
+  category   ServiceCategory @relation(fields: [categoryId], references: [id])
+
+  branchId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  billItems   BillItem[]
+  appointmentServices AppointmentService[]
+  comboPackServices   ComboPackService[]
+  spaPackServices     SpaPackService[]
+}
+
+model Product {
+  id           String   @id @default(uuid())
+  name         String
+  sku          String?
+  description  String?
+  price        Decimal  @db.Decimal(10, 2)
+  stockQty     Int      @default(0)
+  minStockLevel Int     @default(5)
+  unit         String   @default("unit")
+  taxRate      Decimal  @default(0) @db.Decimal(5, 2)
+  isActive     Boolean  @default(true)
+  branchId     String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  billItems    BillItem[]
+  stockHistory RetailStockMovement[]
+}
+
+// ─────────────────────────────────────────────
+// BILLING
+// ─────────────────────────────────────────────
+
+model Bill {
+  id            String        @id @default(uuid())
+  billNumber    String        @unique
+  billType      BillType
+  grossTotal    Decimal       @db.Decimal(10, 2)
+  discount      Decimal       @default(0) @db.Decimal(10, 2)
+  discountType  String        @default("FLAT") // FLAT | PERCENT
+  taxAmount     Decimal       @default(0) @db.Decimal(10, 2)
+  tipAmount     Decimal       @default(0) @db.Decimal(10, 2)
+  netPayable    Decimal       @db.Decimal(10, 2)
+  amountPaid    Decimal       @default(0) @db.Decimal(10, 2)
+  balanceDue    Decimal       @default(0) @db.Decimal(10, 2)
+  paymentStatus PaymentStatus @default(DUE)
+  billNote      String?       // visible on receipt
+  privateNote   String?       // internal only
+  isDraft       Boolean       @default(false)
+  isAdvance     Boolean       @default(false)
+
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+
+  createdById String
+  createdBy   User   @relation("BillCreatedBy", fields: [createdById], references: [id])
+
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  appointmentId String?      @unique
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items    BillItem[]
+  payments Payment[]
+  cashback Cashback?
+}
+
+model BillItem {
+  id         String  @id @default(uuid())
+  billId     String
+  bill       Bill    @relation(fields: [billId], references: [id], onDelete: Cascade)
+  itemType   String  // SERVICE | PRODUCT | PACK_REDEMPTION
+  name       String  // snapshot of name at time of billing
+  quantity   Int     @default(1)
+  unitPrice  Decimal @db.Decimal(10, 2)
+  discount   Decimal @default(0) @db.Decimal(10, 2)
+  taxRate    Decimal @default(0) @db.Decimal(5, 2)
+  taxAmount  Decimal @default(0) @db.Decimal(10, 2)
+  netAmount  Decimal @db.Decimal(10, 2)
+
+  serviceId  String?
+  service    Service? @relation(fields: [serviceId], references: [id])
+
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id])
+
+  employeeId String?
+  employee   Employee? @relation(fields: [employeeId], references: [id])
+
+  referredServiceId String? // upsell tracking
+
+  createdAt DateTime @default(now())
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  billId        String
+  bill          Bill          @relation(fields: [billId], references: [id], onDelete: Cascade)
+  method        PaymentMethod
+  amount        Decimal       @db.Decimal(10, 2)
+  reference     String?       // card last 4 / UPI ref / Razorpay txn ID
+  razorpayId    String?
+  isVerified    Boolean       @default(false)
+  paidAt        DateTime      @default(now())
+
+  createdAt DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// WALLET & CASHBACK
+// ─────────────────────────────────────────────
+
+model WalletTransaction {
+  id         String   @id @default(uuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  type       String   // CREDIT | DEBIT
+  amount     Decimal  @db.Decimal(10, 2)
+  balance    Decimal  @db.Decimal(10, 2) // balance after transaction
+  reason     String   // e.g., "Cashback on bill DG-2026-0012", "Redeemed for bill"
+  billId     String?
+  createdAt  DateTime @default(now())
+}
+
+model Cashback {
+  id          String   @id @default(uuid())
+  billId      String   @unique
+  bill        Bill     @relation(fields: [billId], references: [id])
+  percentage  Decimal  @db.Decimal(5, 2)
+  amount      Decimal  @db.Decimal(10, 2)
+  credited    Boolean  @default(false)
+  creditedAt  DateTime?
+  createdAt   DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// APPOINTMENTS
+// ─────────────────────────────────────────────
+
+model Chair {
+  id       String  @id @default(uuid())
+  name     String  // "Chair 1", "Room A"
+  type     String  @default("CHAIR") // CHAIR | ROOM
+  isActive Boolean @default(true)
+  branchId String
+  branch   Branch  @relation(fields: [branchId], references: [id])
+
+  appointments Appointment[]
+}
+
+model Appointment {
+  id         String            @id @default(uuid())
+  status     AppointmentStatus @default(SCHEDULED)
+  source     AppointmentSource @default(WALK_IN)
+  startTime  DateTime
+  endTime    DateTime
+  notes      String?
+  cancelReason String?
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  employeeId String?
+  employee   Employee? @relation(fields: [employeeId], references: [id])
+
+  chairId String?
+  chair   Chair?   @relation(fields: [chairId], references: [id])
+
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  services AppointmentService[]
+  bill     Bill?
+}
+
+model AppointmentService {
+  id            String @id @default(uuid())
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  serviceId     String
+  service       Service     @relation(fields: [serviceId], references: [id])
+  duration      Int         // minutes, snapshot at time of booking
+}
+
+// ─────────────────────────────────────────────
+// PACKAGES — COMBO, SPA, PREPAID
+// ─────────────────────────────────────────────
+
+model ComboPack {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+  price       Decimal @db.Decimal(10, 2)
+  validityDays Int    @default(90)
+  isActive    Boolean @default(true)
+  branchId    String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  services          ComboPackService[]
+  customerComboPacks CustomerComboPack[]
+}
+
+model ComboPackService {
+  id          String    @id @default(uuid())
+  comboPackId String
+  comboPack   ComboPack @relation(fields: [comboPackId], references: [id], onDelete: Cascade)
+  serviceId   String
+  service     Service   @relation(fields: [serviceId], references: [id])
+  quantity    Int       @default(1)
+}
+
+model CustomerComboPack {
+  id          String     @id @default(uuid())
+  customerId  String
+  customer    Customer   @relation(fields: [customerId], references: [id])
+  comboPackId String
+  comboPack   ComboPack  @relation(fields: [comboPackId], references: [id])
+  status      PackStatus @default(ACTIVE)
+  purchasedAt DateTime   @default(now())
+  expiresAt   DateTime
+
+  billId String?
+
+  sessions ComboPackSession[]
+}
+
+model ComboPackSession {
+  id                  String            @id @default(uuid())
+  customerComboPackId String
+  customerComboPack   CustomerComboPack @relation(fields: [customerComboPackId], references: [id])
+  serviceId           String
+  redeemedAt          DateTime          @default(now())
+  billId              String?
+}
+
+model SpaPack {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+  price       Decimal @db.Decimal(10, 2)
+  sessions    Int     @default(1)
+  validityDays Int    @default(180)
+  isActive    Boolean @default(true)
+  branchId    String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  services         SpaPackService[]
+  customerSpaPacks CustomerSpaPack[]
+}
+
+model SpaPackService {
+  id        String  @id @default(uuid())
+  spaPackId String
+  spaPack   SpaPack @relation(fields: [spaPackId], references: [id], onDelete: Cascade)
+  serviceId String
+  service   Service @relation(fields: [serviceId], references: [id])
+  sessionsIncluded Int @default(1)
+}
+
+model CustomerSpaPack {
+  id               String     @id @default(uuid())
+  customerId       String
+  customer         Customer   @relation(fields: [customerId], references: [id])
+  spaPackId        String
+  spaPack          SpaPack    @relation(fields: [spaPackId], references: [id])
+  status           PackStatus @default(ACTIVE)
+  sessionsTotal    Int
+  sessionsUsed     Int        @default(0)
+  sessionsRemaining Int
+  purchasedAt      DateTime   @default(now())
+  expiresAt        DateTime
+
+  billId String?
+
+  redemptions SpaPackRedemption[]
+}
+
+model SpaPackRedemption {
+  id                String          @id @default(uuid())
+  customerSpaPackId String
+  customerSpaPack   CustomerSpaPack @relation(fields: [customerSpaPackId], references: [id])
+  serviceId         String
+  redeemedAt        DateTime        @default(now())
+  billId            String?
+  employeeId        String?
+}
+
+model PrepaidPack {
+  id           String  @id @default(uuid())
+  name         String
+  price        Decimal @db.Decimal(10, 2)   // amount customer pays
+  creditAmount Decimal @db.Decimal(10, 2)   // credit loaded (may include bonus)
+  bonusAmount  Decimal @default(0) @db.Decimal(10, 2)
+  validityDays Int     @default(365)
+  isActive     Boolean @default(true)
+  branchId     String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customerPrepaidPacks CustomerPrepaidPack[]
+}
+
+model CustomerPrepaidPack {
+  id            String      @id @default(uuid())
+  customerId    String
+  customer      Customer    @relation(fields: [customerId], references: [id])
+  prepaidPackId String
+  prepaidPack   PrepaidPack @relation(fields: [prepaidPackId], references: [id])
+  balance       Decimal     @db.Decimal(10, 2)
+  purchasedAt   DateTime    @default(now())
+  expiresAt     DateTime
+  status        PackStatus  @default(ACTIVE)
+
+  billId String?
+}
+
+// ─────────────────────────────────────────────
+// MEMBERSHIPS
+// ─────────────────────────────────────────────
+
+model MembershipPlan {
+  id              String  @id @default(uuid())
+  name            String
+  description     String?
+  price           Decimal @db.Decimal(10, 2)
+  durationMonths  Int     @default(12)
+  discountPercent Decimal @default(0) @db.Decimal(5, 2) // discount on services
+  serviceCredits  Decimal @default(0) @db.Decimal(10, 2) // service credit balance
+  isActive        Boolean @default(true)
+  branchId        String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customerMemberships CustomerMembership[]
+}
+
+model CustomerMembership {
+  id               String           @id @default(uuid())
+  customerId       String
+  customer         Customer         @relation(fields: [customerId], references: [id])
+  membershipPlanId String
+  membershipPlan   MembershipPlan   @relation(fields: [membershipPlanId], references: [id])
+  status           MembershipStatus @default(ACTIVE)
+  creditBalance    Decimal          @db.Decimal(10, 2)
+  startDate        DateTime         @default(now())
+  expiryDate       DateTime
+  discountPercent  Decimal          @db.Decimal(5, 2)
+
+  billId String?
+
+  creditTransactions MembershipCreditTransaction[]
+}
+
+model MembershipCreditTransaction {
+  id                   String             @id @default(uuid())
+  customerMembershipId String
+  customerMembership   CustomerMembership @relation(fields: [customerMembershipId], references: [id])
+  type                 String             // CREDIT | DEBIT
+  amount               Decimal            @db.Decimal(10, 2)
+  balance              Decimal            @db.Decimal(10, 2)
+  reason               String
+  billId               String?
+  createdAt            DateTime           @default(now())
+}
+
+// ─────────────────────────────────────────────
+// EXPENSES
+// ─────────────────────────────────────────────
+
+model ExpenseCategory {
+  id       String @id @default(uuid())
+  name     String
+  branchId String
+
+  expenses Expense[]
+}
+
+model Expense {
+  id          String   @id @default(uuid())
+  amount      Decimal  @db.Decimal(10, 2)
+  description String
+  date        DateTime @db.Date
+  receiptUrl  String?
+
+  categoryId String
+  category   ExpenseCategory @relation(fields: [categoryId], references: [id])
+
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// MARKETING
+// ─────────────────────────────────────────────
+
+model WhatsAppCampaign {
+  id          String         @id @default(uuid())
+  name        String
+  message     String
+  imageUrl    String?
+  status      CampaignStatus @default(DRAFT)
+  scheduledAt DateTime?
+  sentAt      DateTime?
+
+  targetGroupId String?
+  targetGroup   CustomerGroup? @relation(fields: [targetGroupId], references: [id])
+  targetGender  Gender?
+  targetLastVisitFrom DateTime?
+  targetLastVisitTo   DateTime?
+  targetBirthdays     Boolean    @default(false)
+  targetAnniversaries Boolean    @default(false)
+
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deliveries CampaignDelivery[]
+}
+
+model CampaignDelivery {
+  id         String           @id @default(uuid())
+  campaignId String
+  campaign   WhatsAppCampaign @relation(fields: [campaignId], references: [id])
+  customerId String
+  phone      String
+  status     String           // PENDING | SENT | DELIVERED | FAILED | READ
+  sentAt     DateTime?
+  deliveredAt DateTime?
+  error      String?
+  createdAt  DateTime         @default(now())
+}
+
+model UpsellRule {
+  id              String  @id @default(uuid())
+  triggerServiceId String // when this service is added
+  suggestServiceId String // suggest this service
+  priority        Int     @default(0)
+  isActive        Boolean @default(true)
+  acceptanceCount Int     @default(0)
+  totalShownCount Int     @default(0)
+  branchId        String
+
+  createdAt DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// INVENTORY
+// ─────────────────────────────────────────────
+
+// Retail (sold to customers)
+model RetailStockMovement {
+  id        String            @id @default(uuid())
+  productId String
+  product   Product           @relation(fields: [productId], references: [id])
+  type      StockMovementType
+  quantity  Int
+  reason    String?
+  billId    String?
+  createdAt DateTime          @default(now())
+}
+
+// Inhouse (consumables used during services)
+model InhouseItem {
+  id          String  @id @default(uuid())
+  name        String
+  unit        String  @default("ml")
+  description String?
+  isActive    Boolean @default(true)
+  branchId    String
+  branch      Branch  @relation(fields: [branchId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  poolStock    PoolStock[]
+  stationStocks StationStock[]
+}
+
+model PoolStock {
+  id            String      @id @default(uuid())
+  inhouseItemId String
+  inhouseItem   InhouseItem @relation(fields: [inhouseItemId], references: [id])
+  quantity      Decimal     @db.Decimal(10, 3)
+  branchId      String
+
+  updatedAt DateTime @updatedAt
+
+  movements PoolStockMovement[]
+}
+
+model StationStock {
+  id            String      @id @default(uuid())
+  inhouseItemId String
+  inhouseItem   InhouseItem @relation(fields: [inhouseItemId], references: [id])
+  employeeId    String
+  employee      Employee    @relation(fields: [employeeId], references: [id])
+  quantity      Decimal     @db.Decimal(10, 3)
+  branchId      String
+
+  updatedAt DateTime @updatedAt
+
+  movements StationStockMovement[]
+}
+
+model PoolStockMovement {
+  id          String    @id @default(uuid())
+  poolStockId String
+  poolStock   PoolStock @relation(fields: [poolStockId], references: [id])
+  type        String    // IN | OUT
+  quantity    Decimal   @db.Decimal(10, 3)
+  reason      String?
+  supplierId  String?
+  createdAt   DateTime  @default(now())
+}
+
+model StationStockMovement {
+  id             String       @id @default(uuid())
+  stationStockId String
+  stationStock   StationStock @relation(fields: [stationStockId], references: [id])
+  type           String       // IN (from pool) | OUT (used)
+  quantity       Decimal      @db.Decimal(10, 3)
+  reason         String?
+  createdAt      DateTime     @default(now())
+}
+
+model Supplier {
+  id      String  @id @default(uuid())
+  name    String
+  phone   String?
+  email   String?
+  address String?
+  gstin   String?
+  isActive Boolean @default(true)
+  branchId String
+  branch  Branch  @relation(fields: [branchId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  purchaseOrders PurchaseOrder[]
+}
+
+model PurchaseOrder {
+  id          String   @id @default(uuid())
+  poNumber    String   @unique
+  supplierId  String
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+  status      String   @default("PENDING") // PENDING | RECEIVED | PARTIAL | CANCELLED
+  totalAmount Decimal  @db.Decimal(10, 2)
+  notes       String?
+  orderedAt   DateTime @default(now())
+  receivedAt  DateTime?
+  branchId    String
+
+  createdAt DateTime @default(now())
+
+  items PurchaseOrderItem[]
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  itemName        String
+  quantity        Decimal       @db.Decimal(10, 3)
+  unit            String
+  unitPrice       Decimal       @db.Decimal(10, 2)
+  totalPrice      Decimal       @db.Decimal(10, 2)
+}
+
+// ─────────────────────────────────────────────
+// TIPS
+// ─────────────────────────────────────────────
+
+model Tip {
+  id         String   @id @default(uuid())
+  amount     Decimal  @db.Decimal(10, 2)
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  billId     String?
+  branchId   String
+  createdAt  DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// SETTINGS
+// ─────────────────────────────────────────────
+
+model Setting {
+  id       String @id @default(uuid())
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id])
+  key      String
+  value    String
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([branchId, key])
+}
+
+// Keys: next_bill_number, bill_prefix, currency, phone_prefix,
+//       enable_advance_payment, cashback_enabled, cashback_percent_service,
+//       razorpay_key_id, razorpay_key_secret, otp_provider,
+//       twilio_sid, twilio_token, msg91_key, gst_enabled
+
+model TaxSlab {
+  id       String  @id @default(uuid())
+  name     String  // "GST 18%", "GST 5%"
+  rate     Decimal @db.Decimal(5, 2)
+  isActive Boolean @default(true)
+  branchId String
+
+  createdAt DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// AUDIT LOG
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String   // CREATE_BILL, DELETE_CUSTOMER, UPDATE_SETTING, etc.
+  entity    String   // Bill, Customer, Setting, etc.
+  entityId  String?
+  details   Json?
+  ipAddress String?
+  branchId  String
+  createdAt DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// REMINDERS
+// ─────────────────────────────────────────────
+
+model Reminder {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  dueAt       DateTime
+  isCompleted Boolean  @default(false)
+  customerId  String?
+  branchId    String
+  createdBy   String   // user id
+
+  createdAt DateTime @default(now())
+}
