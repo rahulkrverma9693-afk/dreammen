@@ -25,14 +25,14 @@ router.get('/products', async (req: any, res: any, next: any) => {
 
     if (search) {
       const q = (search as string).toLowerCase();
-      products = products.filter(p =>
+      products = products.filter((p: any) =>
         p.name.toLowerCase().includes(q) ||
         (p.sku && p.sku.toLowerCase().includes(q))
       );
     }
 
     if (lowStock === 'true') {
-      products = products.filter(p => p.stockQty <= p.minStockLevel);
+      products = products.filter((p: any) => p.stockQty <= p.minStockLevel);
     }
 
     return sendSuccess(res, products);

@@ -19,7 +19,7 @@ router.get('/', async (req: any, res: any, next: any) => {
     ]);
 
     const settingsMap: Record<string, string> = {};
-    settingsList.forEach(s => { settingsMap[s.key] = s.value; });
+    settingsList.forEach((s: any) => { settingsMap[s.key] = s.value; });
 
     // Set defaults if empty
     const defaults = {

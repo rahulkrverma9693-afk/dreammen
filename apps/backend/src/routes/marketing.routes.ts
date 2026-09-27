@@ -19,11 +19,11 @@ router.get('/campaigns', async (req: any, res: any, next: any) => {
       orderBy: { createdAt: 'desc' },
     });
 
-    const report = campaigns.map(c => {
+    const report = campaigns.map((c: any) => {
       const total = c.deliveries.length;
-      const sent = c.deliveries.filter(d => d.status === 'SENT' || d.status === 'DELIVERED' || d.status === 'READ').length;
-      const delivered = c.deliveries.filter(d => d.status === 'DELIVERED' || d.status === 'READ').length;
-      const read = c.deliveries.filter(d => d.status === 'READ').length;
+      const sent = c.deliveries.filter((d: any) => d.status === 'SENT' || d.status === 'DELIVERED' || d.status === 'READ').length;
+      const delivered = c.deliveries.filter((d: any) => d.status === 'DELIVERED' || d.status === 'READ').length;
+      const read = c.deliveries.filter((d: any) => d.status === 'READ').length;
       return {
         ...c,
         metrics: { total, sent, delivered, read },
@@ -67,7 +67,7 @@ router.post('/campaigns', authorize('OWNER', 'MANAGER'), async (req: any, res: a
 
       if (customers.length > 0) {
         await prisma.campaignDelivery.createMany({
-          data: customers.map(c => ({
+          data: customers.map((c: any) => ({
             campaignId: campaign.id,
             customerId: c.id,
             phone: c.phone,
@@ -125,16 +125,16 @@ router.get('/upsell-rules', async (req: any, res: any, next: any) => {
 
     // Populate service names
     const serviceIds = new Set<string>();
-    rules.forEach(r => { serviceIds.add(r.triggerServiceId); serviceIds.add(r.suggestServiceId); });
+    rules.forEach((r: any) => { serviceIds.add(r.triggerServiceId); serviceIds.add(r.suggestServiceId); });
 
     const services = await prisma.service.findMany({
       where: { id: { in: Array.from(serviceIds) } },
       select: { id: true, name: true, price: true },
     });
 
-    const serviceMap = new Map(services.map(s => [s.id, s]));
+    const serviceMap = new Map(services.map((s: any) => [s.id, s]));
 
-    const populated = rules.map(r => ({
+    const populated = rules.map((r: any) => ({
       ...r,
       triggerService: serviceMap.get(r.triggerServiceId) || { name: 'Service' },
       suggestService: serviceMap.get(r.suggestServiceId) || { name: 'Suggested Service' },

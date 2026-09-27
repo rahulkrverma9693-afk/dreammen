@@ -216,7 +216,7 @@ router.post('/:id/pay', async (req: any, res: any, next: any) => {
     );
 
     const updatedPayments = [...bill.payments, ...newPayments];
-    const totalPaid = updatedPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+    const totalPaid = updatedPayments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
     const net = Number(bill.netPayable);
     const due = Math.max(0, net - totalPaid);
     const paymentStatus = totalPaid >= net ? 'PAID' : totalPaid > 0 ? 'PARTIAL' : 'DUE';

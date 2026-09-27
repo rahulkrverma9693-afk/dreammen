@@ -79,7 +79,7 @@ router.get('/performance', authorize('OWNER', 'MANAGER'), async (req: any, res: 
     });
 
     // Compute metrics per employee
-    const performance = employees.map((emp) => {
+    const performance = employees.map((emp: any) => {
       const totalRevenue = emp.billItems.reduce(
         (sum: number, item: any) => sum + Number(item.netAmount || 0), 0
       );
