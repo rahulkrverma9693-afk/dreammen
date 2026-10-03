@@ -9,6 +9,10 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
+// JWT secrets are validated at startup (index.ts); safe to assert non-null here.
+const JWT_SECRET = process.env.JWT_SECRET as string;
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET as string;
+
 // ─── Login ────────────────────────────────────────────────
 router.post(
   '/login',
@@ -25,6 +29,8 @@ router.post(
 
       const { email, password } = req.body;
 
+      // SECURITY: Any database error must surface as a 503, not as a demo login.
+      // There is no fallback authentication path in production.
       let user;
       try {
         user = await prisma.user.findUnique({
@@ -32,25 +38,15 @@ router.post(
           include: { branch: true, employee: true },
         });
       } catch (dbError) {
-        // Demo fallback when database is offline
-        user = {
-          id: 'demo-user-1',
-          email,
-          passwordHash: await bcrypt.hash(password || 'password123', 10),
-          name: email.toLowerCase().includes('owner') ? 'Ritu Sharma (Owner)' : 'Priya Sharma (Receptionist)',
-          role: email.toLowerCase().includes('owner') ? 'OWNER' : 'RECEPTIONIST',
-          isActive: true,
-          branchId: 'demo-branch-1',
-          branch: { id: 'demo-branch-1', name: 'DreamGirl Salon (Main Branch)' },
-          employee: null,
-        };
+        console.error('[Auth] Database error during login lookup:', dbError);
+        throw new AppError('Authentication service temporarily unavailable', 503);
       }
 
       if (!user || !user.isActive) {
         throw new AppError('Invalid credentials', 401);
       }
 
-      const isMatch = user.id === 'demo-user-1' ? true : await bcrypt.compare(password, user.passwordHash);
+      const isMatch = await bcrypt.compare(password, user.passwordHash);
       if (!isMatch) {
         throw new AppError('Invalid credentials', 401);
       }
@@ -62,18 +58,18 @@ router.post(
           branchId: user.branchId,
           employeeId: user.employeeId,
         },
-        process.env.JWT_SECRET || 'secret',
+        JWT_SECRET,
         { expiresIn: (process.env.JWT_EXPIRES_IN || '8h') as jwt.SignOptions['expiresIn'] }
       );
 
       const refreshToken = jwt.sign(
         { userId: user.id },
-        process.env.JWT_REFRESH_SECRET || 'refresh_secret',
+        JWT_REFRESH_SECRET,
         { expiresIn: (process.env.JWT_REFRESH_EXPIRES_IN || '30d') as jwt.SignOptions['expiresIn'] }
       );
 
+      // Store refresh token and update last login — both can fail without blocking login
       try {
-        // Store refresh token
         await prisma.refreshToken.create({
           data: {
             token: refreshToken,
@@ -81,13 +77,15 @@ router.post(
             expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
           },
         });
-
-        // Update last login
         await prisma.user.update({
           where: { id: user.id },
           data: { lastLoginAt: new Date() },
         });
-      } catch (_) {}
+      } catch (err) {
+        // Non-fatal: token and last-login tracking failure should not block login,
+        // but we log it for observability.
+        console.warn('[Auth] Could not persist refresh token or update lastLoginAt:', err);
+      }
 
       return sendSuccess(res, {
         accessToken,
@@ -98,7 +96,7 @@ router.post(
           email: user.email,
           role: user.role,
           branchId: user.branchId,
-          branchName: user.branch.name,
+          branchName: user.branch?.name,
         },
       }, 'Login successful');
     } catch (error) {
@@ -115,10 +113,12 @@ router.post('/refresh', async (req: any, res: any, next: any) => {
       throw new AppError('Refresh token required', 400);
     }
 
-    const decoded = jwt.verify(
-      refreshToken,
-      process.env.JWT_REFRESH_SECRET!
-    ) as { userId: string };
+    let decoded: { userId: string };
+    try {
+      decoded = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as { userId: string };
+    } catch {
+      throw new AppError('Invalid or expired refresh token', 401);
+    }
 
     const storedToken = await prisma.refreshToken.findUnique({
       where: { token: refreshToken },
@@ -130,6 +130,12 @@ router.post('/refresh', async (req: any, res: any, next: any) => {
     }
 
     const user = storedToken.user;
+
+    // SECURITY: Verify user is still active before issuing a new access token.
+    if (!user.isActive) {
+      throw new AppError('User account is deactivated', 401);
+    }
+
     const accessToken = jwt.sign(
       {
         userId: user.id,
@@ -137,7 +143,7 @@ router.post('/refresh', async (req: any, res: any, next: any) => {
         branchId: user.branchId,
         employeeId: user.employeeId,
       },
-      process.env.JWT_SECRET || 'secret',
+      JWT_SECRET,
       { expiresIn: (process.env.JWT_EXPIRES_IN || '8h') as jwt.SignOptions['expiresIn'] }
     );
 
@@ -171,6 +177,7 @@ router.get('/me', authenticate, async (req: AuthRequest, res: any, next: any) =>
         branch: { select: { id: true, name: true, logoUrl: true } },
       },
     });
+    if (!user) throw new AppError('User not found', 404);
     return sendSuccess(res, user);
   } catch (error) {
     next(error);

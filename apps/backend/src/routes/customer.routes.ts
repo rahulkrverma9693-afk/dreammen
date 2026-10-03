@@ -153,4 +153,44 @@ router.delete('/:id', authorize('OWNER', 'MANAGER'), async (req: any, res: any, 
   } catch (error) { next(error); }
 });
 
+// POST /api/customers/:id/wallet/credit — Wallet top-up (matches frontend API contract)
+// This resolves the API mismatch where the frontend calls /customers/:id/wallet/credit
+// but the original backend only exposed /packages/topup-wallet
+router.post('/:id/wallet/credit', authorize('OWNER', 'MANAGER', 'RECEPTIONIST'), async (req: any, res: any, next: any) => {
+  try {
+    const branchId = await getValidBranchId(req.user?.branchId);
+    const { amount, reason } = req.body;
+    const topupAmt = parseFloat(amount);
+
+    if (!topupAmt || topupAmt <= 0) {
+      throw new AppError('A positive amount is required', 400);
+    }
+
+    // SECURITY: Validate the customer belongs to this branch before crediting
+    const customer = await prisma.customer.findFirst({
+      where: { id: req.params.id, branchId },
+    });
+    if (!customer) throw new AppError('Customer not found', 404);
+
+    const newBal = Number(customer.walletBalance) + topupAmt;
+
+    await prisma.customer.update({
+      where: { id: customer.id },
+      data: { walletBalance: newBal },
+    });
+
+    const txn = await prisma.walletTransaction.create({
+      data: {
+        customerId: customer.id,
+        type: 'CREDIT',
+        amount: topupAmt,
+        balance: newBal,
+        reason: reason || 'Manual wallet top-up',
+      },
+    });
+
+    return sendSuccess(res, { ...txn, walletBalance: newBal }, `₹${topupAmt} added to customer wallet`);
+  } catch (error) { next(error); }
+});
+
 export default router;

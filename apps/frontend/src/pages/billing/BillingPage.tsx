@@ -72,77 +72,65 @@ export default function BillingPage() {
   const [completedBillData, setCompletedBillData] = useState<any>(null);
 
   // ─── API Data Fetching ─────────────────────────────────────
-  // ─── API Data Fetching ─────────────────────────────────────
-  // Customers search (live from DB)
-  const { data: apiCustomers = null } = useQuery({
+  // Customers search (live from DB — no mock fallback)
+  const { data: apiCustomers = [], error: customersError } = useQuery({
     queryKey: ['billing-customers', customerSearch],
     queryFn: async () => {
-      try {
-        const url = customerSearch.trim()
-          ? `/customers?search=${encodeURIComponent(customerSearch)}&limit=15`
-          : `/customers?limit=15`;
-        const r = await api.get(url);
-        const list = r.data.data?.customers || (Array.isArray(r.data.data) ? r.data.data : []);
-        return list;
-      } catch {
-        const s = customerSearch.toLowerCase();
-        return MOCK_CUSTOMERS.filter(c =>
-          !s || c.name.toLowerCase().includes(s) || c.phone.includes(s)
-        );
-      }
+      const url = customerSearch.trim()
+        ? `/customers?search=${encodeURIComponent(customerSearch)}&limit=15`
+        : `/customers?limit=15`;
+      const r = await api.get(url);
+      const list = r.data.data?.customers || (Array.isArray(r.data.data) ? r.data.data : []);
+      return list;
     },
     enabled: showCustomerDropdown && !selectedCustomer,
+    retry: 2,
   });
 
-  // Products (live from DB)
-  const { data: apiProducts = null } = useQuery({
+  // Products (live from DB — no mock fallback)
+  const { data: products = [], isLoading: productsLoading, error: productsError } = useQuery({
     queryKey: ['billing-products', productSearch],
     queryFn: async () => {
-      try {
-        const params = productSearch ? `?search=${encodeURIComponent(productSearch)}` : '';
-        const r = await api.get(`/inventory/products${params}`);
-        return Array.isArray(r.data.data) ? r.data.data : [];
-      } catch { return MOCK_PRODUCTS; }
+      const params = productSearch ? `?search=${encodeURIComponent(productSearch)}` : '';
+      const r = await api.get(`/inventory/products${params}`);
+      return Array.isArray(r.data.data) ? r.data.data : [];
     },
     enabled: activeTab === 'PRODUCT',
+    retry: 2,
   });
-  const products = apiProducts ?? MOCK_PRODUCTS;
 
-  // Services (live from DB)
-  const { data: apiServices = null } = useQuery({
+  // Services (live from DB — no mock fallback)
+  const { data: services = [], isLoading: servicesLoading, error: servicesError } = useQuery({
     queryKey: ['billing-services'],
     queryFn: async () => {
-      try {
-        const r = await api.get('/services');
-        return Array.isArray(r.data.data) ? r.data.data : [];
-      } catch { return MOCK_SERVICES; }
+      const r = await api.get('/services');
+      return Array.isArray(r.data.data) ? r.data.data : [];
     },
+    retry: 2,
   });
-  const services = apiServices ?? MOCK_SERVICES;
 
-  // Categories (live from DB)
-  const { data: apiCategories = null } = useQuery({
+  // Categories (live from DB — no mock fallback)
+  const { data: categories = [], error: categoriesError } = useQuery({
     queryKey: ['billing-categories'],
     queryFn: async () => {
-      try {
-        const r = await api.get('/services/categories');
-        return Array.isArray(r.data.data) ? r.data.data : [];
-      } catch { return MOCK_CATEGORIES; }
+      const r = await api.get('/services/categories');
+      return Array.isArray(r.data.data) ? r.data.data : [];
     },
+    retry: 2,
   });
-  const categories = apiCategories ?? MOCK_CATEGORIES;
 
-  // Employees (live from DB)
-  const { data: apiEmployees = null } = useQuery({
+  // Employees (live from DB — no mock fallback)
+  const { data: employees = [], error: employeesError } = useQuery({
     queryKey: ['employees'],
     queryFn: async () => {
-      try {
-        const r = await api.get('/employees');
-        return Array.isArray(r.data.data) ? r.data.data : [];
-      } catch { return MOCK_EMPLOYEES; }
+      const r = await api.get('/employees');
+      return Array.isArray(r.data.data) ? r.data.data : [];
     },
+    retry: 2,
   });
-  const employees = apiEmployees ?? MOCK_EMPLOYEES;
+
+  // Any critical data load error worth surfacing
+  const dataLoadError = servicesError || categoriesError || employeesError;
 
   // Drafts from DB
   useEffect(() => {
@@ -155,9 +143,9 @@ export default function BillingPage() {
   // Spa Pack Sub-tab
   const [spaSubTab, setSpaSubTab] = useState<'ASSIGN' | 'REDEEM'>('ASSIGN');
 
-  // Filtered Customers dropdown (uses live API data)
+  // Filtered Customers dropdown (uses live API data only — no mock fallback)
   const filteredCustomers = useMemo(() => {
-    return apiCustomers ?? MOCK_CUSTOMERS;
+    return apiCustomers;
   }, [apiCustomers]);
 
   // Filtered Services by category, gender & search (uses live API data)

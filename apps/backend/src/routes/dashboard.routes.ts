@@ -74,11 +74,15 @@ router.get('/summary', async (req: any, res: any, next: any) => {
       }),
     ]);
 
-    // Calculate summary
-    const income = todayBills.reduce((sum: number, b: any) => sum + Number(b.netPayable), 0);
+    // Calculate summary — correctly separated financial metrics
+    // IMPORTANT: grossSales (netPayable) ≠ cashCollected (amountPaid).
+    // Unpaid/partial bills are receivables, not collected revenue.
+    const grossSales = todayBills.reduce((sum: number, b: any) => sum + Number(b.netPayable), 0);
+    const cashCollected = todayBills.reduce((sum: number, b: any) => sum + Number(b.amountPaid), 0);
+    const outstanding = todayBills.reduce((sum: number, b: any) => sum + Number(b.balanceDue), 0);
     const expenses = todayExpenses.reduce((sum: number, e: any) => sum + Number(e.amount), 0);
 
-    // Payment breakdown
+    // Payment breakdown (actual cash collected by method)
     const allPayments = todayBills.flatMap((b: any) => b.payments);
     const paymentBreakdown = {
       CASH: 0, CARD: 0, UPI: 0, WALLET: 0, ADVANCE: 0, MEMBERSHIP_CREDITS: 0,
@@ -93,20 +97,18 @@ router.get('/summary', async (req: any, res: any, next: any) => {
       PREPAID_PACK: 0, MEMBERSHIP: 0,
     };
     todayBills.forEach((b: any) => {
-      incomeByType[b.billType as keyof typeof incomeByType] += Number(b.netPayable);
+      incomeByType[b.billType as keyof typeof incomeByType] += Number(b.amountPaid);
     });
 
-    const balanceDue = todayBills
-      .filter((b: any) => b.paymentStatus !== 'PAID')
-      .reduce((sum: number, b: any) => sum + Number(b.balanceDue), 0);
-
     return sendSuccess(res, {
-      income,
+      // Clearly named financial metrics
+      grossSales,        // Total invoiced (netPayable sum) — includes unpaid
+      cashCollected,     // Actual money received today
+      outstanding,       // Still owed (balance due)
+      estimatedProfit: cashCollected - expenses, // Cash-basis operating estimate
       expenses,
-      netProfit: income - expenses,
       paymentBreakdown,
       incomeByType,
-      balanceDue,
       lowStockProducts,
       irregularCustomers,
       billCount: todayBills.length,

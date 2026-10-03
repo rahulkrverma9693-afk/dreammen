@@ -1,14 +1,25 @@
+# ── DEVELOPMENT ONLY ──────────────────────────────────────────────────────────
+# This docker-compose.yml is for local development ONLY.
+# NEVER use these credentials in staging or production.
+#
+# For production deployments:
+#   - Use a managed PostgreSQL service (e.g., Supabase, RDS, Neon)
+#   - Pull DB credentials from environment variables / secrets manager
+#   - Enable Redis AUTH (requirepass) and TLS
+#   - Do NOT version-control any real credentials
+# ─────────────────────────────────────────────────────────────────────────────
+
 version: '3.8'
 
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: dreamgirl_postgres
+    container_name: dreamgirl_postgres_dev
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: dreamgirl2026
-      POSTGRES_DB: dreamgirl_salon
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dreamgirl_local_dev_only}
+      POSTGRES_DB: ${POSTGRES_DB:-dreamgirl_salon}
     ports:
       - "5432:5432"
     volumes:
@@ -21,8 +32,20 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: dreamgirl_redis
+    container_name: dreamgirl_redis_dev
     restart: unless-stopped
+    # SECURITY: Add a password for Redis even in development
+    # Set REDIS_PASSWORD in your .env file
+    command: >
+      sh -c "
+        if [ -n '$$REDIS_PASSWORD' ]; then
+          redis-server --requirepass $$REDIS_PASSWORD;
+        else
+          redis-server;
+        fi
+      "
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     ports:
       - "6379:6379"
     volumes:

@@ -203,60 +203,71 @@ router.post('/transfer', authorize('OWNER', 'MANAGER'), async (req: any, res: an
       throw new AppError('inhouseItemId, employeeId, and positive quantity are required', 400);
     }
 
-    // Get or create pool stock
-    let pool = await prisma.poolStock.findFirst({
-      where: { inhouseItemId, branchId },
+    // Validate employee belongs to this branch
+    const emp = await prisma.employee.findFirst({
+      where: { id: employeeId, branchId, isActive: true },
     });
-    if (!pool) {
-      pool = await prisma.poolStock.create({
-        data: { inhouseItemId, quantity: 0, branchId },
+    if (!emp) throw new AppError('Employee not found in this branch', 404);
+
+    // ── SECURITY: All pool→station operations must be atomic ──
+    // If any step fails, the entire transfer is rolled back. This prevents
+    // scenarios where pool is decremented but the station is never credited.
+    const result = await prisma.$transaction(async (tx) => {
+      // Get or create pool stock record inside the transaction
+      let pool = await tx.poolStock.findFirst({ where: { inhouseItemId, branchId } });
+      if (!pool) {
+        pool = await tx.poolStock.create({
+          data: { inhouseItemId, quantity: 0, branchId },
+        });
+      }
+
+      if (Number(pool.quantity) < transferQty) {
+        throw new AppError(`Insufficient pool stock. Available: ${pool.quantity}`, 400);
+      }
+
+      // Deduct pool stock
+      const updatedPool = await tx.poolStock.update({
+        where: { id: pool.id },
+        data: { quantity: { decrement: transferQty } },
       });
-    }
 
-    if (Number(pool.quantity) < transferQty) {
-      throw new AppError(`Insufficient pool stock. Available: ${pool.quantity}`, 400);
-    }
-
-    // Deduct pool stock
-    await prisma.poolStock.update({
-      where: { id: pool.id },
-      data: { quantity: { decrement: transferQty } },
-    });
-
-    await prisma.poolStockMovement.create({
-      data: {
-        poolStockId: pool.id,
-        type: 'OUT',
-        quantity: transferQty,
-        reason: reason || `Transferred to station`,
-      },
-    });
-
-    // Add to station stock
-    let station = await prisma.stationStock.findFirst({
-      where: { inhouseItemId, employeeId, branchId },
-    });
-    if (!station) {
-      station = await prisma.stationStock.create({
-        data: { inhouseItemId, employeeId, quantity: transferQty, branchId },
+      await tx.poolStockMovement.create({
+        data: {
+          poolStockId: pool.id,
+          type: 'OUT',
+          quantity: transferQty,
+          reason: reason || `Transferred to station (${emp.name})`,
+        },
       });
-    } else {
-      station = await prisma.stationStock.update({
-        where: { id: station.id },
-        data: { quantity: { increment: transferQty } },
-      });
-    }
 
-    await prisma.stationStockMovement.create({
-      data: {
-        stationStockId: station.id,
-        type: 'IN',
-        quantity: transferQty,
-        reason: reason || 'Received from main pool',
-      },
+      // Add to station stock
+      let station = await tx.stationStock.findFirst({
+        where: { inhouseItemId, employeeId, branchId },
+      });
+      if (!station) {
+        station = await tx.stationStock.create({
+          data: { inhouseItemId, employeeId, quantity: transferQty, branchId },
+        });
+      } else {
+        station = await tx.stationStock.update({
+          where: { id: station.id },
+          data: { quantity: { increment: transferQty } },
+        });
+      }
+
+      await tx.stationStockMovement.create({
+        data: {
+          stationStockId: station.id,
+          type: 'IN',
+          quantity: transferQty,
+          reason: reason || 'Received from main pool',
+        },
+      });
+
+      return { pool: updatedPool, station };
     });
 
-    return sendSuccess(res, { pool, station }, 'Stock transferred to station successfully');
+    return sendSuccess(res, result, 'Stock transferred to station successfully');
   } catch (error) { next(error); }
 });
 

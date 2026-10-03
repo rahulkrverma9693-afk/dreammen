@@ -57,7 +57,11 @@ router.post('/campaigns', authorize('OWNER', 'MANAGER'), async (req: any, res: a
       },
     });
 
-    // If sendNow, create simulated deliveries for targeted customers
+    // If sendNow, create delivery records for targeted customers.
+    // IMPORTANT: These records have status PENDING_SEND — a real WhatsApp provider
+    // integration (e.g., Meta Cloud API, Twilio, or Gupshup) is required to
+    // actually send messages and update statuses via webhooks.
+    // Math.random() was previously used here to simulate delivery — that has been removed.
     if (sendNow) {
       const where: any = { branchId, isActive: true };
       if (targetGroupId) where.groupId = targetGroupId;
@@ -71,7 +75,7 @@ router.post('/campaigns', authorize('OWNER', 'MANAGER'), async (req: any, res: a
             campaignId: campaign.id,
             customerId: c.id,
             phone: c.phone,
-            status: Math.random() > 0.1 ? 'DELIVERED' : 'SENT',
+            status: 'PENDING_SEND', // Real status updated by WhatsApp provider webhook
             sentAt: new Date(),
           })),
         });

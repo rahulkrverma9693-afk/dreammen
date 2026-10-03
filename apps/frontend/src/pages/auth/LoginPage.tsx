@@ -4,7 +4,7 @@ import { Eye, EyeOff, Scissors, Sparkles } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import api from '../../utils/api';
-import { useAuthStore, AuthUser } from '../../stores/authStore';
+import { useAuthStore } from '../../stores/authStore';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('owner@dreamgirlsalon.com');
@@ -24,18 +24,13 @@ export default function LoginPage() {
       navigate('/');
     },
     onError: (error: any) => {
-      // Demo fallback login for instant testing & client previews
-      const demoUser: AuthUser = {
-        id: 'user-demo-1',
-        name: 'Priya (Receptionist)',
-        email: email || 'priya@dreamgirlsalon.in',
-        role: 'RECEPTIONIST',
-        branchId: 'branch-1',
-        branchName: 'DreamGirl Salon (Main Branch)',
-      };
-      login(demoUser, 'demo-access-token', 'demo-refresh-token');
-      toast.success('Welcome back, Priya! 🌹');
-      navigate('/');
+      // SECURITY: A failed login must ALWAYS show an error.
+      // There is no demo fallback — doing so would bypass authentication entirely.
+      const message =
+        error?.response?.data?.message ||
+        error?.message ||
+        'Login failed. Please check your credentials.';
+      toast.error(message);
     },
   });
 

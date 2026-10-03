@@ -37,12 +37,17 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'dreamgirl-auth',
+      // SECURITY: Only persist non-sensitive user metadata to localStorage.
+      // Access and refresh tokens are intentionally excluded from persistence.
+      // Persisting tokens in localStorage exposes them to XSS attacks.
+      // The recommended production approach is HTTP-only secure cookies set by the server.
+      // For now, tokens live only in memory — users will need to re-login after page refresh.
+      // TODO: Implement server-side HTTP-only cookie session management.
       partialize: (state) => ({
         user: state.user,
-        accessToken: state.accessToken,
-        refreshToken: state.refreshToken,
-        isAuthenticated: state.isAuthenticated,
+        isAuthenticated: false, // Reset auth on page load; re-validate via /auth/me with stored cookie
       }),
     }
   )
 );
+

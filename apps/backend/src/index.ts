@@ -22,6 +22,27 @@ import packageRoutes from './routes/package.routes';
 
 dotenv.config();
 
+// ─── Fail-Fast Config Validation ─────────────────────────────
+// If critical secrets are missing or too weak, crash immediately.
+// This prevents silent insecure fallbacks in production.
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  console.error('FATAL: JWT_SECRET is missing or too short (minimum 32 characters).');
+  process.exit(1);
+}
+
+if (!JWT_REFRESH_SECRET || JWT_REFRESH_SECRET.length < 32) {
+  console.error('FATAL: JWT_REFRESH_SECRET is missing or too short (minimum 32 characters).');
+  process.exit(1);
+}
+
+if (!process.env.DATABASE_URL) {
+  console.error('FATAL: DATABASE_URL is not set.');
+  process.exit(1);
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 

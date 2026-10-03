@@ -82,16 +82,15 @@ export default function BookingPage() {
       const appt = res.data.data;
       setBookedAppointment(appt);
       toast.success('Appointment booked successfully! 🌹');
-    } catch {
-      setBookedAppointment({
-        id: `APPT-${Date.now()}`,
-        service: selectedService,
-        date: selectedDate,
-        time: selectedTimeSlot,
-        customerName: name,
-        customerPhone: phone,
-      });
-      toast.success('Appointment booked successfully (Demo)! 🌹');
+    } catch (err: any) {
+      // SECURITY: A failed booking must show an error — never a fake success confirmation.
+      // Showing "Appointment booked (Demo)" when the server rejected the request
+      // means customers believe they have an appointment when they do not.
+      const message =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Booking failed. Please try again or call us directly.';
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
     }

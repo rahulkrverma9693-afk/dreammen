@@ -21,16 +21,17 @@ router.get('/', async (req: any, res: any, next: any) => {
     const settingsMap: Record<string, string> = {};
     settingsList.forEach((s: any) => { settingsMap[s.key] = s.value; });
 
-    // Set defaults if empty
+    // Public/non-sensitive defaults only.
+    // SECURITY: Payment provider credentials (razorpay_key_id, razorpay_key_secret)
+    // must NEVER be stored in the settings table or returned via this endpoint.
+    // They belong exclusively in server-side environment variables.
     const defaults = {
       bill_prefix: 'DG-2026-',
       next_bill_number: '1001',
       currency: 'INR',
       phone_prefix: '+91',
-      gstin: '07AAAAA0000A1Z5',
+      gstin: '',
       gst_enabled: 'true',
-      razorpay_key_id: 'rzp_live_x892aKls81',
-      razorpay_mode: 'live',
       printer_paper_width: '80mm',
       printer_header: 'DREAMGIRL FAMILY SALON & SPA',
       printer_footer: 'Thank you for visiting! Follow us @dreamgirlsalon',
@@ -38,6 +39,10 @@ router.get('/', async (req: any, res: any, next: any) => {
       booking_enabled: 'true',
       ...settingsMap,
     };
+
+    // SECURITY: Strip any sensitive keys that may have been stored inadvertently.
+    const SENSITIVE_KEYS = ['razorpay_key_id', 'razorpay_key_secret', 'razorpay_mode', 'razorpay_webhook_secret'];
+    SENSITIVE_KEYS.forEach((k) => delete (defaults as any)[k]);
 
     return sendSuccess(res, {
       branch,

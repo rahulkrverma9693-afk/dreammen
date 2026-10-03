@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import prisma from './prisma';
+import { AppError } from '../middleware/errorHandler';
 
 export const sendSuccess = (
   res: Response,
@@ -53,13 +54,17 @@ export const getPaginationParams = (query: Record<string, string>) => {
   return { page, limit, skip };
 };
 
-// Validate and resolve active branchId
+// Validate that a branchId is present and exists in the database.
+// SECURITY: This function must NEVER fall back to the first branch in the DB.
+// If the branch context is missing or invalid, it is a tenant-isolation violation
+// and must be treated as an authentication failure.
 export const getValidBranchId = async (reqBranchId?: string): Promise<string> => {
-  if (reqBranchId) {
-    const branch = await prisma.branch.findUnique({ where: { id: reqBranchId } });
-    if (branch) return branch.id;
+  if (!reqBranchId) {
+    throw new AppError('Branch context missing — please re-authenticate', 401);
   }
-  const mainBranch = await prisma.branch.findFirst();
-  if (!mainBranch) throw new Error('No active salon branch found in database');
-  return mainBranch.id;
+  const branch = await prisma.branch.findUnique({ where: { id: reqBranchId } });
+  if (!branch) {
+    throw new AppError('Branch not found or access denied', 403);
+  }
+  return branch.id;
 };

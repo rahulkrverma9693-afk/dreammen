@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { authenticate, authorize } from '../middleware/auth';
 import prisma from '../utils/prisma';
 import { sendSuccess } from '../utils/helpers';
@@ -6,10 +7,27 @@ import { AppError } from '../middleware/errorHandler';
 
 const router = Router();
 
+// ── Rate Limiter for public endpoints ─────────────────────────────────────
+// Prevents abuse of the unauthenticated booking endpoint (fake bookings, scraping).
+const publicBookingLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // max 5 booking attempts per IP per 15 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many booking requests. Please try again in 15 minutes.' },
+});
+
+const publicServicesLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 service list requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // ── Public Endpoints (No Auth Needed for Customer Online Booking) ──
-router.get('/public-services', async (req: any, res: any, next: any) => {
+router.get('/public-services', publicServicesLimiter, async (req: any, res: any, next: any) => {
   try {
-    const branch = await prisma.branch.findFirst();
+    const branch = await prisma.branch.findFirst({ where: { bookingEnabled: true } });
     if (!branch) return sendSuccess(res, []);
     const services = await prisma.service.findMany({
       where: { branchId: branch.id, isActive: true },
@@ -20,18 +38,65 @@ router.get('/public-services', async (req: any, res: any, next: any) => {
   } catch (error) { next(error); }
 });
 
-router.post('/public-booking', async (req: any, res: any, next: any) => {
+router.post('/public-booking', publicBookingLimiter, async (req: any, res: any, next: any) => {
+
   try {
     const { name, phone, email, serviceId, employeeId, startTime, notes } = req.body;
+
+    // Basic validation
     if (!name || !phone || !serviceId || !startTime) {
       throw new AppError('Name, phone, service, and start time are required', 400);
     }
+    const phoneDigits = phone.replace(/\D/g, '');
+    if (phoneDigits.length < 10) {
+      throw new AppError('A valid 10-digit phone number is required', 400);
+    }
 
-    const branch = await prisma.branch.findFirst();
-    if (!branch) throw new AppError('No active salon branch found', 400);
+    // SECURITY: Use a stable branch lookup — findFirst() is non-deterministic in multi-branch.
+    // For a single-branch salon the first branch is acceptable; in multi-branch deployments
+    // pass a branchSlug query param and look up by slug instead.
+    const branch = await prisma.branch.findFirst({
+      where: { bookingEnabled: true },
+    });
+    if (!branch) throw new AppError('Online booking is currently unavailable', 503);
 
+    // Validate that the service exists and belongs to this branch
+    const service = await prisma.service.findFirst({
+      where: { id: serviceId, branchId: branch.id, isActive: true },
+    });
+    if (!service) throw new AppError('Selected service is not available', 400);
+
+    const duration = service.duration || 45;
+    const start = new Date(startTime);
+    const end = new Date(start.getTime() + duration * 60 * 1000);
+
+    if (isNaN(start.getTime())) {
+      throw new AppError('Invalid start time format', 400);
+    }
+    if (start < new Date()) {
+      throw new AppError('Cannot book an appointment in the past', 400);
+    }
+
+    // SECURITY: Check for employee booking conflicts before creating anything.
+    // Canonical overlap: existing.startTime < requestedEnd AND existing.endTime > requestedStart
+    if (employeeId) {
+      const employeeConflict = await prisma.appointment.findFirst({
+        where: {
+          branchId: branch.id,
+          employeeId,
+          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+          startTime: { lt: end },
+          endTime: { gt: start },
+        },
+      });
+      if (employeeConflict) {
+        throw new AppError('This stylist is already booked for the selected time slot', 409);
+      }
+    }
+
+    // Upsert customer (idempotent)
     let customer = await prisma.customer.findFirst({
-      where: { phone, branchId: branch.id },
+      where: { phone: phoneDigits, branchId: branch.id },
     });
     if (!customer) {
       const count = await prisma.customer.count({ where: { branchId: branch.id } });
@@ -40,17 +105,12 @@ router.post('/public-booking', async (req: any, res: any, next: any) => {
         data: {
           customerId,
           name,
-          phone,
+          phone: phoneDigits,
           email: email || undefined,
           branchId: branch.id,
         },
       });
     }
-
-    const start = new Date(startTime);
-    const service = await prisma.service.findUnique({ where: { id: serviceId } });
-    const duration = service?.duration || 45;
-    const end = new Date(start.getTime() + duration * 60 * 1000);
 
     const appt = await prisma.appointment.create({
       data: {
@@ -63,12 +123,7 @@ router.post('/public-booking', async (req: any, res: any, next: any) => {
         endTime: end,
         notes: notes ? `[Online Booking] ${notes}` : '[Online Booking]',
         services: {
-          create: [
-            {
-              serviceId,
-              duration,
-            },
-          ],
+          create: [{ serviceId: service.id, duration }],
         },
       },
       include: {
@@ -206,20 +261,45 @@ router.post('/', async (req: any, res: any, next: any) => {
     });
     if (!customer) throw new AppError('Customer not found', 404);
 
-    // Check for conflicts on same chair
+    // ── SECURITY: Conflict checks must always scope to the same branch (tenant isolation) ──
+    // Canonical overlap formula: existing.startTime < requestedEnd AND existing.endTime > requestedStart
+
     if (chairId) {
-      const conflict = await prisma.appointment.findFirst({
+      // Validate chair belongs to this branch
+      const chair = await prisma.chair.findFirst({
+        where: { id: chairId, branchId: req.user.branchId, isActive: true },
+      });
+      if (!chair) throw new AppError('Chair not found in this branch', 404);
+
+      const chairConflict = await prisma.appointment.findFirst({
         where: {
+          branchId: req.user.branchId,
           chairId,
           status: { notIn: ['CANCELLED', 'NO_SHOW'] },
-          OR: [
-            { startTime: { lt: new Date(endTime), gte: new Date(startTime) } },
-            { endTime: { gt: new Date(startTime), lte: new Date(endTime) } },
-            { startTime: { lte: new Date(startTime) }, endTime: { gte: new Date(endTime) } },
-          ],
+          startTime: { lt: new Date(endTime) },
+          endTime: { gt: new Date(startTime) },
         },
       });
-      if (conflict) throw new AppError('Chair is already booked in this time slot', 409);
+      if (chairConflict) throw new AppError('Chair is already booked in this time slot', 409);
+    }
+
+    if (employeeId) {
+      // Validate employee belongs to this branch
+      const emp = await prisma.employee.findFirst({
+        where: { id: employeeId, branchId: req.user.branchId, isActive: true },
+      });
+      if (!emp) throw new AppError('Employee not found in this branch', 404);
+
+      const employeeConflict = await prisma.appointment.findFirst({
+        where: {
+          branchId: req.user.branchId,
+          employeeId,
+          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+          startTime: { lt: new Date(endTime) },
+          endTime: { gt: new Date(startTime) },
+        },
+      });
+      if (employeeConflict) throw new AppError('This employee is already booked in this time slot', 409);
     }
 
     // Fetch service durations for the appointment
