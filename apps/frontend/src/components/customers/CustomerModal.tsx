@@ -105,7 +105,7 @@ export default function CustomerModal({
       onSuccess(resCust);
       onClose();
     } catch (err: any) {
-      const msg = err?.response?.data?.message || (customer ? 'Failed to update customer' : 'Failed to add customer');
+      const msg = err?.response?.data?.message || err?.message || (customer ? 'Failed to update customer' : 'Failed to add customer');
       toast.error(msg);
     } finally {
       setIsSaving(false);
